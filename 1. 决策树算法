@@ -1,0 +1,1237 @@
+# 题4.3 试编程实现基于信息嫡/信息增益进行划分选择的决策树算法，并为表4.3中数据生成一棵决策树。
+
+# ---------------------------------------------------ID3算法---------------------------------------------------#
+
+
+import numpy as np
+import pandas as pd
+import math
+import copy
+import matplotlib.pyplot as plt
+import matplotlib as mpl
+
+# 我们在使用matplotlib lib画图的时候经常会遇见中文或者是负号无法显示的情况，我们会添加下面两句话.
+mpl.rcParams[u'font.sans-serif'] = ['simhei']
+mpl.rcParams['axes.unicode_minus'] = False
+
+dataset = pd.read_excel('4.3.xlsx')  # 读取数据
+Attributes = dataset.columns  # 所有属性的名称
+m, n = np.shape(dataset)  # 得到数据集大小,m为行数，n为列数，输出类型为元组，故可以通过m,n=的方式去分别赋值给m和n
+dataset = np.matrix(dataset)  # 转换dataSet类型为matrix，这样子才可以进行遍历
+for i in range(m):  # 将标签替换成好瓜和坏瓜
+    if dataset[i, n - 1] == '是':
+        dataset[i, n - 1] = '好瓜'
+    else:
+        dataset[i, n - 1] = '坏瓜'
+attributeList = []  # 属性列表，每一个属性的取值，列表中元素是集合
+for i in range(n):
+    curSet = set()  # 使用集合是利用了集合里面元素不可重复的特性，从而提取出了每个属性的取值
+    for j in range(m):
+        curSet.add(dataset[j, i])
+    attributeList.append(curSet)
+D = np.arange(0, m, 1)  # 表示每一个样本编号
+A = list(np.ones(n))  # 表示每一个属性是否被使用，使用过了标为 -1
+A[-1] = -1  # 将数据里面的标签和编号列标记为 -1
+A[0] = -1
+# print(A)
+# print(D)
+EPS = 0.000001
+
+
+class Node(object):  # 创建一个类，用来表示节点的信息
+    def __init__(self, title):
+        self.title = title  # 上一级指向该节点的线上的标记文字
+        self.v = 1  # 节点的信息标记
+        self.children = []  # 节点的孩子列表
+        self.deep = 0  # 节点深度
+        self.ID = -1  # 节点编号
+
+
+def isSameY(D):  # 判断所有样本是否属于同一类
+    curY = dataset[D[0], n - 1]  # 取第0行，第n-1列，此时return为好瓜
+    for i in range(1, len(D)):
+        if dataset[D[i], n - 1] != curY:
+            return False
+    return True
+
+
+def isBlankA(A):  # 判断A是否是空，是空则返回true
+    for i in range(n):
+        if A[i] > 0:
+            return False
+    return True
+
+
+def isSameAinD(D, A):  # 判断在D中，是否所有的未使用过的样本属性均相同
+    for i in range(n):
+        if A[i] > 0:
+            for j in range(1, len(D)):
+                if not isSameValue(dataset[D[0], i], dataset[D[j], i], EPS):
+                    return False
+    return True
+
+
+def isSameValue(v1, v2, EPS):  # 判断v1、v2 是否相等
+    if type(v1) == type(dataset[0, 8]):
+        return abs(v1 - v2) < EPS
+    else:
+        return v1 == v2
+
+
+def mostCommonY(D):  # 寻找D中样本数最多的类别
+    res = dataset[D[0], n - 1]  # D中第一个样本标签
+    maxC = 1
+    count = {}
+    count[res] = 1  # 该标签数量记为1
+    for i in range(1, len(D)):
+        curV = dataset[D[i], n - 1]  # 得到D中第i+1个样本的标签
+        if curV not in count:  # 若之前不存在这个标签
+            count[curV] = 1  # 则该标签数量记为1
+        else:
+            count[curV] += 1  # 否则 ，该标签对应的数量加一
+        if count[curV] > maxC:  # maxC始终存贮最多标签对应的样本数量
+            maxC = count[curV]  # res 存贮当前样本数最多的标签类型
+            res = curV
+    return res  # 返回的是样本数最多的标签的类型
+
+
+def entropyD(D):  # 参数D中所存的样本的交叉熵
+    types = []  # 存贮类别标签
+    count = {}  # 存贮每个类别对应的样本数量
+    for i in range(len(D)):  # 统计D中存在的每个类型的样本数量
+        curY = dataset[D[i], n - 1]
+        if curY not in count:
+            count[curY] = 1
+            types.append(curY)
+        else:
+            count[curY] += 1
+    ans = 0
+    total = len(D)  # D中样本总数量
+    for i in range(len(types)):  # 计算交叉熵
+        ans -= count[types[i]] / total * math.log2(count[types[i]] / total)
+    return ans
+
+
+def gain(D, p):  # 属性 p 上的信息增益
+    if type(dataset[0, p]) == type(dataset[0, 8]):  # 判断若是连续属性，则调用另一个函数
+        res, divideV = gainFloat(D, p)
+    else:
+        types = []
+        count = {}
+        for i in range(len(D)):  # 得到每一个属性取值上的样本编号
+            a = dataset[D[i], p]
+            if a not in count:
+                count[a] = [D[i]]
+                types.append(a)
+            else:
+                count[a].append(D[i])
+        res = entropyD(D)  # D的交叉熵
+        total = len(D)
+        for i in range(len(types)):  # 计算出每一个属性取值分支上的交叉熵，再计算出信息增益
+            res -= len(count[types[i]]) / total * entropyD(count[types[i]])
+        divideV = -1000  # 这个只是随便给的一个值，没有实际意义
+    return res, divideV
+
+
+def gainFloat(D, p):  # 获得在连续属性上的最大信息增益及对应的划分点
+    a = []
+    for i in range(len(D)):  # 得到在该属性上的所有取值
+        a.append(dataset[D[i], p])
+    a.sort()  # 排序
+    T = []
+    for i in range(len(a) - 1):  # 计算每一个划分点
+        T.append((a[i] + a[i + 1]) / 2)
+    res = entropyD(D)  # D的交叉熵
+    ans = 0
+    divideV = T[0]
+    for i in range(len(T)):  # 循环根据每一个分割点进行划分
+        left = []
+        right = []
+        for j in range(len(D)):  # 根据特定分割点将样本分成两部分
+            if dataset[D[j], p] <= T[i]:
+                left.append(D[j])
+            else:
+                right.append(D[j])
+        temp = res - entropyD(left) - entropyD(right)  # 计算特定分割点下的信息增益
+        if temp > ans:
+            divideV = T[i]  # 始终存贮产生最大信息增益的分割点
+            ans = temp  # 存贮最大的信息增益
+    return ans, divideV
+
+
+def treeGenerate(D, A, title):
+    node = Node(title)
+    if isSameY(D):  # D中所有样本是否属于同一类
+        node.v = dataset[D[0], n - 1]
+        return node
+
+    # 是否所有属者性全部使用过或D中所有样本的未使用的属性均相同
+    if isBlankA(A) or isSameAinD(D, A):
+        node.v = mostCommonY(D)  # 此时类别标记为样本数最多的类别（暗含可以处理存在异常样本的情况）
+        return node  # 否则所有样本的类别应该一致
+
+    entropy = 0
+    floatV = 0
+    p = 0
+    for i in range(len(A)):  # 循环遍历A,找可以获得最大信息增益的属性
+        if A[i] > 0:
+            curEntropy, divideV = gain(D, i)
+            if curEntropy > entropy:
+                p = i  # 存贮属性编号
+                entropy = curEntropy
+                floatV = divideV
+
+    if isSameValue(-1000, floatV, EPS):  # 说明是离散属性
+        node.v = Attributes[p] + "=?"  # 节点信息
+        curSet = attributeList[p]  # 该属性的所有取值
+        # print(curSet)
+        for i in curSet:
+            Dv = []
+            for j in range(len(D)):  # 获得该属性取某一个值时对应的样本标号
+                if dataset[D[j], p] == i:
+                    Dv.append(D[j])
+            # print(Dv)
+
+            # 若该属性取值对应没有符合的样本，则将该分支作为叶子，类别是D中样本数最多的类别
+            # 其实就是处理在没有对应的样本情况下的问题。那就取最大可能性的一类。
+            if not Dv:
+                nextNode = Node(i)
+                nextNode.v = mostCommonY(D)
+                node.children.append(nextNode)
+            else:  # 若存在对应的样本，则递归继续生成该节点下的子树
+                newA = copy.deepcopy(A)  # 注意是深度复制，否则会改变A中的值
+                newA[p] = -1
+                node.children.append(treeGenerate(Dv, newA, i))
+    else:  # 若对应的是连续的属性
+        Dleft = []
+        Dright = []
+        node.v = Attributes[p] + "<=" + str(floatV) + "?"  # 节点信息
+        for i in range(len(D)):  # 根据划分点将样本分成左右两部分
+            if dataset[D[i], p] <= floatV:
+                Dleft.append(D[i])
+            else:
+                Dright.append(D[i])
+        node.children.append(treeGenerate(Dleft, A[:], "是"))  # 左边递归生成子树，是 yes 分支
+        node.children.append(treeGenerate(Dright, A[:], "否"))  # 同上。 注意，在此时没有将对应的A中值变成 -1
+    return node  # 因为连续属性可以使用多次进行划分
+
+
+def countLeaf(root, deep):
+    root.deep = deep
+    res = 0
+    if root.v == '好瓜' or root.v == '坏瓜':  # 说明此时已经是叶子节点了，所以直接返回
+        res += 1
+        return res, deep
+    curdeep = deep  # 记录当前深度
+    for i in root.children:  # 得到子树中的深度和叶子节点的个数
+        a, b = countLeaf(i, deep + 1)
+        res += a
+        if b > curdeep: curdeep = b
+    return res, curdeep
+
+
+def giveLeafID(root, ID):  # 给叶子节点编号
+    if root.v == '好瓜' or root.v == '坏瓜':
+        root.ID = ID
+        ID += 1
+        return ID
+    for i in root.children:
+        ID = giveLeafID(i, ID)
+    return ID
+
+
+def plotNode(nodeTxt, centerPt, parentPt, nodeType):  # 绘制节点
+    plt.annotate(nodeTxt, xy=parentPt, xycoords='axes fraction', xytext=centerPt,
+                 textcoords='axes fraction', va="center", ha="center", bbox=nodeType,
+                 arrowprops=arrow_args)
+
+
+def dfsPlot(root):
+    if root.ID == -1:  # 说明根节点不是叶子节点
+        childrenPx = []
+        meanPx = 0
+        for i in root.children:
+            cur = dfsPlot(i)
+            meanPx += cur
+            childrenPx.append(cur)
+        meanPx = meanPx / len(root.children)
+        c = 0
+        for i in root.children:
+            nodetype = leafNode
+            if i.ID < 0: nodetype = decisionNode
+            plotNode(i.v, (childrenPx[c], 0.9 - i.deep * 0.8 / deep), (meanPx, 0.9 - root.deep * 0.8 / deep), nodetype)
+            plt.text((childrenPx[c] + meanPx) / 2, (0.9 - i.deep * 0.8 / deep + 0.9 - root.deep * 0.8 / deep) / 2,
+                     i.title)
+            c += 1
+        return meanPx
+    else:
+        return 0.1 + root.ID * 0.8 / (cnt - 1)
+
+
+myDecisionTreeRoot = treeGenerate(D, A, "root")  # 生成决策树
+cnt, deep = countLeaf(myDecisionTreeRoot, 0)  # 得到树的深度和叶子节点的个数
+giveLeafID(myDecisionTreeRoot, 0)
+# 绘制决策树
+decisionNode = dict(boxstyle="sawtooth", fc="0.9", color='blue')
+leafNode = dict(boxstyle="round4", fc="0.9", color='red')
+arrow_args = dict(arrowstyle="<-", color='green')
+fig = plt.figure(1, facecolor='white')
+rootX = dfsPlot(myDecisionTreeRoot)
+plotNode(myDecisionTreeRoot.v, (rootX, 0.9), (rootX, 0.9), decisionNode)
+plt.show()
+
+# 题4.4 试编程实现基于基尼指数进行划分选择的决策树算法，为表4.2中数据生成预剪枝、后剪枝决策树，并与未剪枝决策树进行比较．
+
+# ------------------------------------------------CART决策树---------------------------------------------------#
+import numpy as np
+import pandas as pd
+import copy
+import matplotlib.pyplot as plt
+import matplotlib as mpl
+
+mpl.rcParams[u'font.sans-serif'] = ['simhei']
+mpl.rcParams['axes.unicode_minus'] = False
+
+dataset = pd.read_excel('./WaterMelon_2.0.xlsx')  # 读取数据
+Attributes = dataset.columns[:-1]  # 所有属性的名称
+# print(Attributes)
+dataset = np.matrix(dataset)
+dataset = dataset[:, :-1]
+m, n = np.shape(dataset)  # 得到数据集大小
+for i in range(m):  # 将标签替换成 好瓜 和 坏瓜
+    if dataset[i, n - 1] == '是':
+        dataset[i, n - 1] = '好瓜'
+    else:
+        dataset[i, n - 1] = '坏瓜'
+attributeList = []  # 属性列表，每一个属性的取值，列表中元素是集合
+for i in range(n):
+    curSet = set()  # 使用集合是利用了集合里面元素不可重复的特性，从而提取出了每个属性的取值
+    for j in range(m):
+        curSet.add(dataset[j, i])
+    attributeList.append(curSet)
+# print(attributeList)
+D = np.arange(0, m, 1)  # 表示每一个样本编号
+A = list(np.ones(n))  # 表示每一个属性是否被使用，使用过了标为 -1
+A[-1] = -1  # 将数据里面的标签和编号列标记为 -1
+A[0] = -1
+
+
+# print(A)
+# print(D)
+
+
+class Node(object):  # 创建一个类，用来表示节点的信息
+    def __init__(self, title):
+        self.title = title  # 上一级指向该节点的线上的标记文字
+        self.v = 1  # 节点的信息标记
+        self.children = []  # 节点的孩子列表
+        self.deep = 0  # 节点深度
+        self.ID = -1  # 节点编号
+
+
+def isSameY(D):  # 判断所有样本是否属于同一类
+    curY = dataset[D[0], n - 1]
+    for i in range(1, len(D)):
+        if dataset[D[i], n - 1] != curY:
+            return False
+    return True
+
+
+def isBlankA(A):  # 判断 A 是否是空，是空则返回true
+    for i in range(n):
+        if A[i] > 0:
+            return False
+    return True
+
+
+def isSameAinD(D, A):  # 判断在D中，是否所有的未使用过的样本属性均相同
+    for i in range(n):
+        if A[i] > 0:
+            for j in range(1, len(D)):
+                if not isSameValue(dataset[D[0], i], dataset[D[j], i]):
+                    return False
+    return True
+
+
+def isSameValue(v1, v2):  # 判断v1、v2 是否相等
+    return v1 == v2
+
+
+def mostCommonY(D):  # 寻找D中样本数最多的类别
+    res = dataset[D[0], n - 1]  # D中第一个样本标签
+    maxC = 1
+    count = {}
+    count[res] = 1  # 该标签数量记为1
+    for i in range(1, len(D)):
+        curV = dataset[D[i], n - 1]  # 得到D中第i+1个样本的标签
+        if curV not in count:  # 若之前不存在这个标签
+            count[curV] = 1  # 则该标签数量记为1
+        else:
+            count[curV] += 1  # 否则 ，该标签对应的数量加一
+        if count[curV] > maxC:  # maxC始终存贮最多标签对应的样本数量
+            maxC = count[curV]  # res 存贮当前样本数最多的标签类型
+            res = curV
+    return res  # 返回的是样本数最多的标签的类型
+
+
+def gini(D):  # 参数D中所存的样本的基尼值
+    types = []  # 存贮类别标签
+    count = {}  # 存贮每个类别对应的样本数量
+    for i in range(len(D)):  # 统计D中存在的每个类型的样本数量
+        curY = dataset[D[i], n - 1]
+        if curY not in count:
+            count[curY] = 1
+            types.append(curY)
+        else:
+            count[curY] += 1
+    ans = 1
+    total = len(D)  # D中样本总数量
+    for i in range(len(types)):  # 计算基尼值
+        ans -= (count[types[i]] / total) ** 2
+    return ans
+
+
+def gini_indexD(D, p):  # 属性 p 上的基尼指数
+    types = []
+    count = {}
+    for i in range(len(D)):  # 得到每一个属性取值上的样本编号
+        a = dataset[D[i], p]
+        if a not in count:
+            count[a] = [D[i]]
+            types.append(a)
+        else:
+            count[a].append(D[i])
+    res = 0
+    total = len(D)
+    for i in range(len(types)):  # 计算出每一个属性取值分支上的基尼值，再计算出基尼指数
+        res += len(count[types[i]]) / total * gini(count[types[i]])
+    return res
+
+
+def treeGenerate(D, A, title):
+    node = Node(title)
+    if isSameY(D):  # D中所有样本是否属于同一类
+        node.v = dataset[D[0], n - 1]
+        return node
+
+    # 是否所有属性全部使用过  或者  D中所有样本的未使用的属性均相同
+    if isBlankA(A) or isSameAinD(D, A):
+        node.v = mostCommonY(D)  # 此时类别标记为样本数最多的类别（暗含可以处理存在异常样本的情况）
+        return node  # 否则所有样本的类别应该一致
+
+    gini_index = float('inf')
+    p = 0
+    for i in range(len(A)):  # 循环遍历A,找可以获得最小基尼指数的属性
+        if A[i] > 0:
+            curGini_index = gini_indexD(D, i)
+            if curGini_index < gini_index:
+                p = i  # 存贮属性编号
+                gini_index = curGini_index
+
+    node.v = Attributes[p] + "=?"  # 节点信息
+    curSet = attributeList[p]  # 该属性的所有取值
+    for i in curSet:
+        Dv = []
+        for j in range(len(D)):  # 获得该属性取某一个值时对应的样本标号
+            if dataset[D[j], p] == i:
+                Dv.append(D[j])
+
+            # 若该属性取值对应没有符合的样本，则将该分支作为叶子，类别是D中样本数最多的类别
+            # 其实就是处理在没有对应的样本情况下的问题。那就取最大可能性的一类。
+        if not Dv:
+            nextNode = Node(i)
+            nextNode.v = mostCommonY(D)
+            node.children.append(nextNode)
+        else:  # 若存在对应的样本，则递归继续生成该节点下的子树
+            newA = copy.deepcopy(A)  # 注意是深度复制，否则会改变A中的值
+            newA[p] = -1
+            node.children.append(treeGenerate(Dv, newA, i))
+    return node
+
+
+def countLeaf(root, deep):
+    root.deep = deep
+    res = 0
+    if root.v == '好瓜' or root.v == '坏瓜':  # 说明此时已经是叶子节点了，所以直接返回
+        res += 1
+        return res, deep
+    curdeep = deep  # 记录当前深度
+    for i in root.children:  # 得到子树中的深度和叶子节点的个数
+        a, b = countLeaf(i, deep + 1)
+        res += a
+        if b > curdeep:
+            curdeep = b
+    return res, curdeep
+
+
+def giveLeafID(root, ID):  # 给叶子节点编号
+    if root.v == '好瓜' or root.v == '坏瓜':
+        root.ID = ID
+        ID += 1
+        return ID
+    for i in root.children:
+        ID = giveLeafID(i, ID)
+    return ID
+
+
+def plotNode(nodeTxt, centerPt, parentPt, nodeType):  # 绘制节点
+    plt.annotate(nodeTxt, xy=parentPt, xycoords='axes fraction', xytext=centerPt,
+                 textcoords='axes fraction', va="center", ha="center", bbox=nodeType,
+                 arrowprops=arrow_args)
+
+
+def dfsPlot(root):
+    if root.ID == -1:  # 说明根节点不是叶子节点
+        childrenPx = []
+        meanPx = 0
+        for i in root.children:
+            cur = dfsPlot(i)
+            meanPx += cur
+            childrenPx.append(cur)
+        meanPx = meanPx / len(root.children)
+        c = 0
+        for i in root.children:
+            nodetype = leafNode
+            if i.ID < 0:
+                nodetype = decisionNode
+            plotNode(i.v, (childrenPx[c], 0.9 - i.deep * 0.8 / deep), (meanPx, 0.9 - root.deep * 0.8 / deep), nodetype)
+            plt.text((1.5 * childrenPx[c] + 0.5 * meanPx) / 2,
+                     (0.9 - i.deep * 0.8 / deep + 0.9 - root.deep * 0.8 / deep) / 2, i.title)
+            c += 1
+        return meanPx
+    else:
+        return 0.1 + root.ID * 0.8 / (cnt - 1)
+
+
+myDecisionTreeRoot = treeGenerate(D, A, "root")  # 生成决策树
+cnt, deep = countLeaf(myDecisionTreeRoot, 0)  # 得到树的深度和叶子节点的个数
+giveLeafID(myDecisionTreeRoot, 0)
+# 绘制决策树
+decisionNode = dict(boxstyle="sawtooth", fc="0.9", color='blue')
+leafNode = dict(boxstyle="round4", fc="0.9", color='red')
+arrow_args = dict(arrowstyle="<-", color='green')
+fig = plt.figure(1, facecolor='white')
+rootX = dfsPlot(myDecisionTreeRoot)
+plotNode(myDecisionTreeRoot.v, (rootX, 0.9), (rootX, 0.9), decisionNode)
+plt.show()
+
+# -------------------------------------------------预剪枝----------------------------------------------------#
+import numpy as np
+import pandas as pd
+import copy
+import matplotlib.pyplot as plt
+import matplotlib as mpl
+
+mpl.rcParams[u'font.sans-serif'] = ['simhei']
+mpl.rcParams['axes.unicode_minus'] = False
+
+dataset = pd.read_excel('./WaterMelon_2.0.xlsx')  # 读取数据
+Attributes = dataset.columns[:-1]  # 所有属性的名称
+# print(Attributes)
+dataset = np.matrix(dataset)
+m, n = np.shape(dataset)
+D_train = []  # 得到所有的训练样本编号和验证样本编号
+D_test = []
+for i in range(m):
+    if dataset[i, n - 1] == 'train':
+        D_train.append(i)
+    else:
+        D_test.append(i)
+# print(D_test)
+# print(D_train)
+dataset = dataset[:, :-1]
+m, n = np.shape(dataset)  # 得到数据集大小
+for i in range(m):  # 将标签替换成 好瓜 和 坏瓜
+    if dataset[i, n - 1] == '是':
+        dataset[i, n - 1] = '好瓜'
+    else:
+        dataset[i, n - 1] = '坏瓜'
+attributeList = []  # 属性列表，每一个属性的取值，列表中元素是集合
+for i in range(n):
+    curSet = set()  # 使用集合是利用了集合里面元素不可重复的特性，从而提取出了每个属性的取值
+    for j in range(m):
+        curSet.add(dataset[j, i])
+    attributeList.append(curSet)
+# print(attributeList)
+A = list(np.ones(n))  # 表示每一个属性是否被使用，使用过了标为 -1
+A[-1] = -1  # 将数据里面的标签和编号列标记为 -1
+A[0] = -1
+
+
+# print(A)
+# print(D)
+
+
+class Node(object):  # 创建一个类，用来表示节点的信息
+    def __init__(self, title):
+        self.title = title  # 上一级指向该节点的线上的标记文字
+        self.v = 1  # 节点的信息标记
+        self.children = []  # 节点的孩子列表
+        self.deep = 0  # 节点深度
+        self.ID = -1  # 节点编号
+
+
+def isSameY(D):  # 判断所有样本是否属于同一类
+    curY = dataset[D[0], n - 1]
+    for i in range(1, len(D)):
+        if dataset[D[i], n - 1] != curY:
+            return False
+    return True
+
+
+def isBlankA(A):  # 判断 A 是否是空，是空则返回true
+    for i in range(n):
+        if A[i] > 0:
+            return False
+    return True
+
+
+def isSameAinD(D, A):  # 判断在D中，是否所有的未使用过的样本属性均相同
+    for i in range(n):
+        if A[i] > 0:
+            for j in range(1, len(D)):
+                if not isSameValue(dataset[D[0], i], dataset[D[j], i]):
+                    return False
+    return True
+
+
+def isSameValue(v1, v2):  # 判断v1、v2 是否相等
+    return v1 == v2
+
+
+def mostCommonY(D):  # 寻找D中样本数最多的类别
+    res = dataset[D[0], n - 1]  # D中第一个样本标签
+    maxC = 1
+    count = {}
+    count[res] = 1  # 该标签数量记为1
+    for i in range(1, len(D)):
+        curV = dataset[D[i], n - 1]  # 得到D中第i+1个样本的标签
+        if curV not in count:  # 若之前不存在这个标签
+            count[curV] = 1  # 则该标签数量记为1
+        else:
+            count[curV] += 1  # 否则 ，该标签对应的数量加一
+        if count[curV] > maxC:  # maxC始终存贮最多标签对应的样本数量
+            maxC = count[curV]  # res 存贮当前样本数最多的标签类型
+            res = curV
+    return res  # 返回的是样本数最多的标签的类型
+
+
+def gini(D):  # 参数D中所存的样本的基尼值
+    types = []  # 存贮类别标签
+    count = {}  # 存贮每个类别对应的样本数量
+    for i in range(len(D)):  # 统计D中存在的每个类型的样本数量
+        curY = dataset[D[i], n - 1]
+        if curY not in count:
+            count[curY] = 1
+            types.append(curY)
+        else:
+            count[curY] += 1
+    ans = 1
+    total = len(D)  # D中样本总数量
+    for i in range(len(types)):  # 计算基尼值
+        ans -= (count[types[i]] / total) ** 2
+    return ans
+
+
+def gini_indexD(D, p):  # 属性 p 上的基尼指数
+    types = []
+    count = {}
+    for i in range(len(D)):  # 得到每一个属性取值上的样本编号
+        a = dataset[D[i], p]
+        if a not in count:
+            count[a] = [D[i]]
+            types.append(a)
+        else:
+            count[a].append(D[i])
+    res = 0
+    total = len(D)
+    for i in range(len(types)):  # 计算出每一个属性取值分支上的基尼值，再计算出基尼指数
+        res += len(count[types[i]]) / total * gini(count[types[i]])
+    return res
+
+
+def beforePrecision(D):  # 计算出在划分之前的精确度
+    v = mostCommonY(D)  # 划分之前节点的分类标签
+    count = 0
+    for i in range(len(D)):  # 计算在D上分类正确的样本个数
+        if dataset[D[i], n - 1] == v:
+            count += 1
+    return count / len(D)  # 返回精确度
+
+
+def afterPrecision(D, D1, p):  # 计算在划分后的精确度
+    curSet = attributeList[p]  # 该属性的所有取值
+    count = 0
+    for i in curSet:
+        Dv = []
+        Dv1 = []
+        for j in range(len(D)):  # 计算出训练集在该属性特定取值i上的样本编号
+            if dataset[D[j], p] == i:
+                Dv.append(D[j])
+        for j in range(len(D1)):  # 计算出验证集在该属性特定取值i上的样本编号
+            if dataset[D1[j], p] == i:
+                Dv1.append(D1[j])
+        if Dv == []:  # 若训练集在属性取值i上为空
+            v = mostCommonY(D)  # 则该分支节点标签为其父节点中训练集样本数的最多一类的标签
+        else:
+            v = mostCommonY(Dv)  # 否则，该节点标签是符合条件的训练集样本中数量最多的一类的标签
+        for k in range(len(Dv1)):
+            if dataset[Dv1[k], n - 1] == v:  # 计算验证集中分类正确的样本个数
+                count += 1
+    return count / len(D1)  # 返回准确率
+
+
+def treeGenerate(D, D1, A, title):
+    node = Node(title)
+    if isSameY(D):  # D中所有样本是否属于同一类
+        node.v = dataset[D[0], n - 1]
+        return node
+
+    # 是否所有属性全部使用过  或者  D中所有样本的未使用的属性均相同
+    if isBlankA(A) or isSameAinD(D, A):
+        node.v = mostCommonY(D)  # 此时类别标记为样本数最多的类别（暗含可以处理存在异常样本的情况）
+        return node  # 否则所有样本的类别应该一致
+
+    gini_index = float('inf')
+    p = 0
+    for i in range(len(A)):  # 循环遍历A,找可以获得最小基尼指数的属性
+        if A[i] > 0:
+            curGini_index = gini_indexD(D, i)
+            if curGini_index < gini_index:
+                p = i  # 存贮属性编号
+                gini_index = curGini_index
+    befPrecision = beforePrecision(D1)  # 划分前精确度
+    aftPrecision = afterPrecision(D, D1, p)  # 划分后精确度
+
+    '''
+    此处之所以用大于等于进行判断，而不是严格的大于，仅仅是为了能绘制出一个树形结构。
+    因为当使用严格大于时，可以发现，根本没办法进行划分，根节点直接就是叶子节点，这样显然是不合实际的
+    个人认为，由于预剪枝本身存在着欠拟合的风险，所以用大于等于条件进行判断一定程度上可以降低欠拟合的风险
+    但是，也可能出现划分后，所有分支的标签都一样的问题。这时可能需要考虑多个因素进行优化，比如结合后剪枝进行。
+    '''
+    if aftPrecision >= befPrecision:
+        node.v = Attributes[p] + "=?"  # 节点信息
+        curSet = attributeList[p]  # 该属性的所有取值
+        for i in curSet:
+            Dv = []
+            Dv1 = []
+            for j in range(len(D)):  # 获得该属性取某一个值时对应的训练集样本标号
+                if dataset[D[j], p] == i:
+                    Dv.append(D[j])
+            for j in range(len(D1)):  # 获得该属性取某一个值时的验证集样本标号
+                if dataset[D1[j], p] == i:
+                    Dv1.append(D1[j])
+
+            # 若该属性取值对应没有符合的样本，则将该分支作为叶子，类别是D中样本数最多的类别
+            # 其实就是处理在没有对应的样本情况下的问题。那就取最大可能性的一类。
+            if Dv == []:
+                nextNode = Node(i)
+                nextNode.v = mostCommonY(D)
+                node.children.append(nextNode)
+            else:  # 若存在对应的样本，则递归继续生成该节点下的子树
+                newA = copy.deepcopy(A)  # 注意是深度复制，否则会改变A中的值
+                newA[p] = -1
+                node.children.append(treeGenerate(Dv, Dv1, newA, i))
+    else:
+        node.v = mostCommonY(D)
+    return node
+
+
+def countLeaf(root, deep):
+    root.deep = deep
+    res = 0
+    if root.v == '好瓜' or root.v == '坏瓜':  # 说明此时已经是叶子节点了，所以直接返回
+        res += 1
+        return res, deep
+    curdeep = deep  # 记录当前深度
+    for i in root.children:  # 得到子树中的深度和叶子节点的个数
+        a, b = countLeaf(i, deep + 1)
+        res += a
+        if b > curdeep:
+            curdeep = b
+    return res, curdeep
+
+
+def giveLeafID(root, ID):  # 给叶子节点编号
+    if root.v == '好瓜' or root.v == '坏瓜':
+        root.ID = ID
+        ID += 1
+        return ID
+    for i in root.children:
+        ID = giveLeafID(i, ID)
+    return ID
+
+
+def plotNode(nodeTxt, centerPt, parentPt, nodeType):  # 绘制节点
+    plt.annotate(nodeTxt, xy=parentPt, xycoords='axes fraction', xytext=centerPt,
+                 textcoords='axes fraction', va="center", ha="center", bbox=nodeType,
+                 arrowprops=arrow_args)
+
+
+def dfsPlot(root):
+    if root.ID == -1:  # 说明根节点不是叶子节点
+        childrenPx = []
+        meanPx = 0
+        for i in root.children:
+            cur = dfsPlot(i)
+            meanPx += cur
+            childrenPx.append(cur)
+        meanPx = meanPx / len(root.children)
+        c = 0
+        for i in root.children:
+            nodetype = leafNode
+            if i.ID < 0:
+                nodetype = decisionNode
+            plotNode(i.v, (childrenPx[c], 0.9 - i.deep * 0.8 / deep), (meanPx, 0.9 - root.deep * 0.8 / deep), nodetype)
+            plt.text((childrenPx[c] + meanPx) / 2, (0.9 - i.deep * 0.8 / deep + 0.9 - root.deep * 0.8 / deep) / 2,
+                     i.title)
+            c += 1
+        return meanPx
+    else:
+        return 0.1 + root.ID * 0.8 / (cnt - 1)
+
+
+myDecisionTreeRoot = treeGenerate(D_train, D_test, A, "root")  # 生成决策树
+cnt, deep = countLeaf(myDecisionTreeRoot, 0)  # 得到树的深度和叶子节点的个数
+giveLeafID(myDecisionTreeRoot, 0)
+# 绘制决策树
+decisionNode = dict(boxstyle="sawtooth", fc="0.9", color='blue')
+leafNode = dict(boxstyle="round4", fc="0.9", color='red')
+arrow_args = dict(arrowstyle="<-", color='green')
+fig = plt.figure(1, facecolor='white')
+rootX = dfsPlot(myDecisionTreeRoot)
+plotNode(myDecisionTreeRoot.v, (rootX, 0.9), (rootX, 0.9), decisionNode)
+plt.show()
+
+# -------------------------------------------------后剪枝----------------------------------------------------#
+import numpy as np
+import pandas as pd
+import copy
+import matplotlib.pyplot as plt
+import matplotlib as mpl
+
+mpl.rcParams[u'font.sans-serif'] = ['simhei']
+mpl.rcParams['axes.unicode_minus'] = False
+
+dataset = pd.read_excel('./WaterMelon_2.0.xlsx')  # 读取数据
+Attributes = dataset.columns[:-1]  # 所有属性的名称
+# print(Attributes)
+dataset = np.matrix(dataset)
+m, n = np.shape(dataset)
+D_train = []  # 得到所有的训练样本编号和验证样本编号
+D_test = []
+for i in range(m):
+    if dataset[i, n - 1] == 'train':
+        D_train.append(i)
+    else:
+        D_test.append(i)
+# print(D_test)
+# print(D_train)
+dataset = dataset[:, :-1]
+m, n = np.shape(dataset)  # 得到数据集大小
+for i in range(m):  # 将标签替换成 好瓜 和 坏瓜
+    if dataset[i, n - 1] == '是':
+        dataset[i, n - 1] = '好瓜'
+    else:
+        dataset[i, n - 1] = '坏瓜'
+attributeList = []  # 属性列表，每一个属性的取值，列表中元素是集合
+for i in range(n):
+    curSet = set()  # 使用集合是利用了集合里面元素不可重复的特性，从而提取出了每个属性的取值
+    for j in range(m):
+        curSet.add(dataset[j, i])
+    attributeList.append(curSet)
+# print(attributeList)
+A = list(np.ones(n))  # 表示每一个属性是否被使用，使用过了标为 -1
+A[-1] = -1  # 将数据里面的标签和编号列标记为 -1
+A[0] = -1
+
+
+# print(A)
+# print(D)
+
+class Node(object):  # 创建一个类，用来表示节点的信息
+    def __init__(self, title):
+        self.title = title  # 上一级指向该节点的线上的标记文字
+        self.v = 1  # 节点的信息标记
+        self.children = []  # 节点的孩子列表
+        self.train = []  # 节点上所含的训练样本编号，主要用于在剪枝时确定节点的标签类别
+        self.deep = 0  # 节点深度
+        self.ID = -1  # 节点编号
+
+
+def isSameY(D):  # 判断所有样本是否属于同一类
+    curY = dataset[D[0], n - 1]
+    for i in range(1, len(D)):
+        if dataset[D[i], n - 1] != curY:
+            return False
+    return True
+
+
+def isBlankA(A):  # 判断 A 是否是空，是空则返回true
+    for i in range(n):
+        if A[i] > 0: return False
+    return True
+
+
+def isSameAinD(D, A):  # 判断在D中，是否所有的未使用过的样本属性均相同
+    for i in range(n):
+        if A[i] > 0:
+            for j in range(1, len(D)):
+                if not isSameValue(dataset[D[0], i], dataset[D[j], i]):
+                    return False
+    return True
+
+
+def isSameValue(v1, v2):  # 判断v1、v2 是否相等
+    return v1 == v2
+
+
+def mostCommonY(D):  # 寻找D中样本数最多的类别
+    res = dataset[D[0], n - 1]  # D中第一个样本标签
+    maxC = 1
+    count = {}
+    count[res] = 1  # 该标签数量记为1
+    for i in range(1, len(D)):
+        curV = dataset[D[i], n - 1]  # 得到D中第i+1个样本的标签
+        if curV not in count:  # 若之前不存在这个标签
+            count[curV] = 1  # 则该标签数量记为1
+        else:
+            count[curV] += 1  # 否则 ，该标签对应的数量加一
+        if count[curV] > maxC:  # maxC始终存贮最多标签对应的样本数量
+            maxC = count[curV]  # res 存贮当前样本数最多的标签类型
+            res = curV
+    return res  # 返回的是样本数最多的标签的类型
+
+
+def gini(D):  # 参数D中所存的样本的基尼值
+    types = []  # 存贮类别标签
+    count = {}  # 存贮每个类别对应的样本数量
+    for i in range(len(D)):  # 统计D中存在的每个类型的样本数量
+        curY = dataset[D[i], n - 1]
+        if curY not in count:
+            count[curY] = 1
+            types.append(curY)
+        else:
+            count[curY] += 1
+    ans = 1
+    total = len(D)  # D中样本总数量
+    for i in range(len(types)):  # 计算基尼值
+        ans -= (count[types[i]] / total) ** 2
+    return ans
+
+
+def gini_indexD(D, p):  # 属性 p 上的基尼指数
+    types = []
+    count = {}
+    for i in range(len(D)):  # 得到每一个属性取值上的样本编号
+        a = dataset[D[i], p]
+        if a not in count:
+            count[a] = [D[i]]
+            types.append(a)
+        else:
+            count[a].append(D[i])
+    res = 0
+    total = len(D)
+    for i in range(len(types)):  # 计算出每一个属性取值分支上的基尼值，再计算出基尼指数
+        res += len(count[types[i]]) / total * gini(count[types[i]])
+    return res
+
+
+def treeGenerate(D, A, title):
+    node = Node(title)
+    node.train = D
+    if isSameY(D):  # D中所有样本是否属于同一类
+        node.v = dataset[D[0], n - 1]
+        return node
+
+    # 是否所有属性全部使用过  或者  D中所有样本的未使用的属性均相同
+    if isBlankA(A) or isSameAinD(D, A):
+        node.v = mostCommonY(D)  # 此时类别标记为样本数最多的类别（暗含可以处理存在异常样本的情况）
+        return node  # 否则所有样本的类别应该一致
+
+    gini_index = float('inf')
+    p = 0
+    for i in range(len(A)):  # 循环遍历A,找可以获得最小基尼指数的属性
+        if (A[i] > 0):
+            curGini_index = gini_indexD(D, i)
+            if curGini_index < gini_index:
+                p = i  # 存贮属性编号
+                gini_index = curGini_index
+
+    node.v = Attributes[p] + "=?"  # 节点信息
+    curSet = attributeList[p]  # 该属性的所有取值
+    for i in curSet:
+        Dv = []
+        for j in range(len(D)):  # 获得该属性取某一个值时对应的训练集样本标号
+            if dataset[D[j], p] == i:
+                Dv.append(D[j])
+
+            # 若该属性取值对应没有符合的样本，则将该分支作为叶子，类别是D中样本数最多的类别
+            # 其实就是处理在没有对应的样本情况下的问题。那就取最大可能性的一类。
+        if Dv == []:
+            nextNode = Node(i)
+            nextNode.v = mostCommonY(D)
+            node.children.append(nextNode)
+        else:  # 若存在对应的样本，则递归继续生成该节点下的子树
+            newA = copy.deepcopy(A)  # 注意是深度复制，否则会改变A中的值
+            newA[p] = -1
+            node.children.append(treeGenerate(Dv, newA, i))
+    return node
+
+
+def postPruning(root):  # 后剪枝操作
+    maxDeep = getMaxDeep(root, 0)  # 得到树的最大深度
+    for de in range(maxDeep - 1, 0, -1):  # 循环依次从最低层进行遍历操作
+        notLeafnode = getNotLeafnode(root, de)  # 得到指定深度上的非叶子节点列表
+        notLeafnode = np.array(notLeafnode).flatten()  # 主要是进行形状变换，拉平成一维数组
+        for i in range(len(notLeafnode)):  # 循环遍历每一个非叶节点
+            befpruning = getRightNum(root, D_test) / len(D_test)  # 剪枝之前的精确度
+            node = notLeafnode[i]  # 得到一个节点
+            curv = node.v  # 当前节点的信息
+            v = mostCommonY(node.train)  # 根据该节点包含的训练集样本得到剪枝后的类别
+            node.v = v  # 进行剪枝，注意此时仅仅是改了信息，与子节点的连接依然存在
+            aftpruning = getRightNum(root, D_test) / len(D_test)  # 剪枝后的精确度
+            if aftpruning > befpruning:  # 此处用严格大于，是为了可以画出一个好看的树，实际情况下应该用大于等于，参见西瓜书P82页的解释
+                node.children = []  # 彻底进行剪枝，去除和子节点的连接信息
+                print("去掉划分属性 ", curv[0:2])
+                print("剪之前精确度：", befpruning)
+                print("剪之后精确度：", aftpruning)
+            else:
+                node.v = curv  # 若不需要剪枝，则直接更改节点的信息即可恢复到原树
+                print("恢复划分属性 ", curv[0:2])
+                print("剪之前精确度：", befpruning)
+                print("剪之后精确度：", aftpruning)
+
+
+def getMaxDeep(root, deep):  # 得到决策树的最大深度
+    root.deep = deep
+    if root.v == '好瓜' or root.v == '坏瓜':
+        return deep
+    curdeep = deep
+    for i in root.children:
+        b = getMaxDeep(i, deep + 1)
+        if b > curdeep:
+            curdeep = b
+    return curdeep
+
+
+def getNotLeafnode(root, deep):  # 迭代得到指定深度处的非叶子节点
+    if root.v != '好瓜' and root.v != '坏瓜' and root.deep == deep:
+        return root
+    else:
+        node = []  # 注意，这个语句只能放在else内，切不可放在函数开头！！！
+        if root.children != []:
+            for i in root.children:
+                curnode = getNotLeafnode(i, deep)
+                if curnode != []:
+                    node.append(curnode)
+    return node
+
+
+def getRightNum(root, D):  # 得到在样本集合D上正确分类的样本数目
+    if root.v == '好瓜':
+        good = getGoodNum(D)
+        return good
+    if root.v == '坏瓜':
+        bad = getBadNum(D)
+        return bad
+    children = root.children
+    child = children[0]
+    num = 0
+    v = root.v[0:2]
+    p = getIndex(Attributes, v)
+    curSet = attributeList[p]
+    for i in curSet:
+        for k in children:
+            if k.title == i:
+                child = k
+                break
+        Dv = []
+        for j in range(len(D)):
+            if dataset[D[j], p] == i:
+                Dv.append(D[j])
+        if Dv != []:
+            num += getRightNum(child, Dv)
+    return num
+
+
+def getGoodNum(D):  # 若标签是好瓜，得到样本中好瓜的数目
+    num = 0
+    for i in range(len(D)):
+        if dataset[D[i], n - 1] == '好瓜':
+            num += 1
+    return num
+
+
+def getBadNum(D):  # 同上，得到坏瓜的数目
+    num = 0
+    for i in range(len(D)):
+        if dataset[D[i], n - 1] == '坏瓜':
+            num += 1
+    return num
+
+
+def getIndex(LL, aa):  # 得到一个列表里面指定元素的索引
+    for i in range(len(LL)):
+        if LL[i] == aa:
+            return i
+
+
+def countLeaf(root, deep):
+    root.deep = deep
+    res = 0
+    if root.v == '好瓜' or root.v == '坏瓜':  # 说明此时已经是叶子节点了，所以直接返回
+        res += 1
+        return res, deep
+    curdeep = deep  # 记录当前深度
+    for i in root.children:  # 得到子树中的深度和叶子节点的个数
+        a, b = countLeaf(i, deep + 1)
+        res += a
+        if b > curdeep: curdeep = b
+    return res, curdeep
+
+
+def giveLeafID(root, ID):  # 给叶子节点编号
+    if root.v == '好瓜' or root.v == '坏瓜':
+        root.ID = ID
+        ID += 1
+        return ID
+    for i in root.children:
+        ID = giveLeafID(i, ID)
+    return ID
+
+
+def plotNode(nodeTxt, centerPt, parentPt, nodeType, arrow_args):  # 绘制节点
+    plt.annotate(nodeTxt, xy=parentPt, xycoords='axes fraction', xytext=centerPt,
+                 textcoords='axes fraction', va="center", ha="center", bbox=nodeType,
+                 arrowprops=arrow_args)
+
+
+def dfsPlot(root, decisionNode, leafNode, arrow_args, cnt, deep):
+    if root.ID == -1:  # 说明根节点不是叶子节点
+        childrenPx = []
+        meanPx = 0
+        for i in root.children:
+            cur = dfsPlot(i, decisionNode, leafNode, arrow_args, cnt, deep)
+            meanPx += cur
+            childrenPx.append(cur)
+        meanPx = meanPx / len(root.children)
+        c = 0
+        for i in root.children:
+            nodetype = leafNode
+            if i.ID < 0: nodetype = decisionNode
+            plotNode(i.v, (childrenPx[c], 0.9 - i.deep * 0.8 / deep), (meanPx, 0.9 - root.deep * 0.8 / deep), nodetype,
+                     arrow_args)
+            plt.text((childrenPx[c] + meanPx) / 2, (0.9 - i.deep * 0.8 / deep + 0.9 - root.deep * 0.8 / deep) / 2,
+                     i.title)
+            c += 1
+        return meanPx
+    else:
+        return 0.1 + root.ID * 0.8 / (cnt - 1)
+
+
+def plotTree(root):  # 绘制决策树
+    cnt, deep = countLeaf(root, 0)  # 得到树的深度和叶子节点的个数
+    giveLeafID(root, 0)
+    decisionNode = dict(boxstyle="sawtooth", fc="0.9", color='blue')
+    leafNode = dict(boxstyle="round4", fc="0.9", color='red')
+    arrow_args = dict(arrowstyle="<-", color='green')
+    fig = plt.figure(1, facecolor='white')
+    rootX = dfsPlot(root, decisionNode, leafNode, arrow_args, cnt, deep)
+    plotNode(root.v, (rootX, 0.9), (rootX, 0.9), decisionNode, arrow_args)
+    plt.show()
+
+
+myDecisionTreeRoot = treeGenerate(D_train, A, "root")  # 生成未剪枝决策树
+plotTree(myDecisionTreeRoot)  # 未剪枝的决策树
+postPruning(myDecisionTreeRoot)  # 进行后剪枝
+plotTree(myDecisionTreeRoot)  # 后剪枝的决策树
+
+
+# -----------------------------------------------Sklearn库-----------------------------------------------#
+
+# ID3算法(信息增益)
+
+import numpy as np
+import pandas as pd
+from sklearn import tree
+
+# 导入包
+import graphviz
+
+df = pd.read_excel('4.3.xlsx')  # 读取文件
+
+# 将特征值全部转化为数字显示
+df['色泽'] = df['色泽'].map({'浅白': 1, '青绿': 2, '乌黑': 3})
+df['根蒂'] = df['根蒂'].map({'稍蜷': 1, '蜷缩': 2, '硬挺': 3})
+df['敲声'] = df['敲声'].map({'清脆': 1, '浊响': 2, '沉闷': 3})
+df['纹理'] = df['纹理'].map({'清晰': 1, '稍糊': 2, '模糊': 3})
+df['脐部'] = df['脐部'].map({'平坦': 1, '稍凹': 2, '凹陷': 3})
+df['触感'] = np.where(df['触感'] == "硬滑", 1, 2)
+df['好瓜'] = np.where(df['好瓜'] == "是", 1, 0)
+x_train = df[['色泽', '根蒂', '敲声', '纹理', '脐部', '触感']]
+y_train = df['好瓜']
+print(df)
+id3 = tree.DecisionTreeClassifier(criterion='entropy')
+id3 = id3.fit(x_train, y_train)
+labels = ['color', 'genti', 'rap', 'texture', 'umbilicus', 'touch']
+dot_data = tree.export_graphviz(id3, feature_names=labels, class_names=["good_melon", "bad_melon"], filled=True,
+                                rounded=True)
+# filled=True，是否填充颜色，true填充颜色。rounded=True，框的形状。
+graph = graphviz.Source(dot_data)
+graph.view()
+
+# C4.5算法
+# C4.5主要克服ID3使用信息增益进行特征划分对取值数据较多特征有偏好的缺点。使用信息增益率进行特征划分。
+# C4.5相比ID3进行的改进有如下4点：
+#
+# 引入剪枝策略，使用悲观剪枝策略进行后剪枝；
+# 使用信息增益率代替信息增益，作为特征划分标准；
+# 将连续特征离散化，假设 n 个样本的连续特征 A 有 m 个取值，C4.5 将其排序并取相邻两样本值的平均数共 m-1 个划分点，分别计算以该划分点作为二元分类点时的信息增益，并选择信息增益最大的点作为该连续特征的二元离散分类点；
+# 缺失值处理
+# 对于具有缺失值的特征，用没有缺失的样本子集所占比重来折算信息增益率，选择划分特征。
+# 选定该划分特征，对于缺失该特征值的样本，将样本以不同的概率划分到不同子节点。
+#
+# 这里需要注意，信息增益率对可取值较少的特征有所偏好（分母越小，整体越大），因此 C4.5 并不是直接用增益率最大的特征进行划分，而是使用一个启发式方法：
+# 先从候选划分特征中找到信息增益高于平均值的特征，再从中选择增益率最高的。
+#
+# 缺点：
+# 剪枝策略可以再优化；
+# C4.5 用的是多叉树，用二叉树效率更高；
+# C4.5 只能用于分类；
+# C4.5 使用的熵模型拥有大量耗时的对数运算，连续值还有排序运算；
+# C4.5在构造树的过程中，对数值属性值需要按照其大小进行排序，从中选择一个分割点，所以只适合于能够驻留于内存的数据集，当训练集大得无法在内存容纳时，程序无法运行。
+
+# CART算法
+# 导入包
+import pandas as pd
+from sklearn import tree
+import numpy as np
+import graphviz
+
+df = pd.read_excel('4.3.xlsx')
+# 将特征值化为数字
+df['色泽'] = df['色泽'].map({'浅白': 1, '青绿': 2, '乌黑': 3})
+df['根蒂'] = df['根蒂'].map({'稍蜷': 1, '蜷缩': 2, '硬挺': 3})
+df['敲声'] = df['敲声'].map({'清脆': 1, '浊响': 2, '沉闷': 3})
+df['纹理'] = df['纹理'].map({'清晰': 1, '稍糊': 2, '模糊': 3})
+df['脐部'] = df['脐部'].map({'平坦': 1, '稍凹': 2, '凹陷': 3})
+df['触感'] = np.where(df['触感'] == "硬滑", 1, 2)
+df['好瓜'] = np.where(df['好瓜'] == "是", 1, 0)
+x_train = df[['色泽', '根蒂', '敲声', '纹理', '脐部', '触感']]
+y_train = df['好瓜']
+
+# 训练得到树，并且可视化
+# 构建模型并训练
+gini = tree.DecisionTreeClassifier()
+gini = gini.fit(x_train, y_train)
+# 实现决策树的可视化
+labels = ['color', 'genti', 'rap', 'texture', 'umbilicus', 'touch']
+gini_data = tree.export_graphviz(gini
+                                 , feature_names=labels
+                                 , class_names=["good_melon", "bad_melon"]
+                                 , filled=True
+                                 , rounded=True
+                                 )
+gini_graph = graphviz.Source(gini_data)
+gini_graph.view()
